@@ -1,0 +1,10 @@
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Large files
+*.pdf
+
+# Python standard
+__pycache__/
+*.pyc
+.env
