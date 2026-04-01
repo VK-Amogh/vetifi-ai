@@ -15,61 +15,78 @@ class Colors:
 API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
 client = genai.Client(api_key=API_KEY)
 
-PDF_PATH = r"d:\Internship\Vetifi\api search\single merged pdf circulatory sys.pdf"
+# --- PDF Paths ---
+PDF_CIRCULATORY = r"d:\Internship\Vetifi\api search\MERCK MANUAL 11th EDITION-1-187.pdf"
+PDF_FULL_BOOK = r"d:\Internship\Vetifi\api search\MERCK MANUAL 11th EDITION.pdf"
 
-def setup_rag_system():
-    print("Creating File Search Store...")
+def setup_rag_system(pdf_path, display_name):
+    """Create a File Search Store for a given PDF and return the store name."""
+    print(f"Creating File Search Store: {display_name}...")
     file_search_store = client.file_search_stores.create(
-        config={'display_name': 'Vetifi Medical Knowledge Base'}
+        config={'display_name': display_name}
     )
     print(f"File search store created! Name: {file_search_store.name}")
 
-    print(f"Uploading file to search store with custom chunking config...")
+    print(f"Uploading {pdf_path}...")
     operation = client.file_search_stores.upload_to_file_search_store(
         file_search_store_name=file_search_store.name,
-        file=PDF_PATH,
+        file=pdf_path,
         config={
             'chunking_config': {
               'white_space_config': {
-                'max_tokens_per_chunk': 500,  # Larger chunks for better medical context
+                'max_tokens_per_chunk': 500,
                 'max_overlap_tokens': 50
               }
             }
         }
     )
 
-    print("Waiting for chunking and indexing operation to complete...")
+    print("Waiting for chunking and indexing to complete...")
     while not operation.done:
         time.sleep(5)
-        # Retrieve the updated operation status
         operation = client.operations.get(operation)
         print(".", end="", flush=True)
 
-    print("\nCustom chunking and setup complete!")
+    print(f"\n{display_name} setup complete!")
     return file_search_store.name
 
-# Set this to your existing store name to skip the 3-minute indexing phase.
-# Set to None if you ever need to process a new PDF and create a new store.
-EXISTING_STORE_NAME = "fileSearchStores/vetifi-medical-knowledge-ba-b6yua75fc30d"
+# --- Existing store names (set after first run to skip re-indexing) ---
+# Set to None to force re-creation
+STORE_CIRCULATORY = None   # e.g. "fileSearchStores/circulatory-system-xxxxx"
+STORE_FULL_BOOK = None     # e.g. "fileSearchStores/full-merck-manual-xxxxx"
 
 def main():
-    if not os.path.exists(PDF_PATH):
-        print(f"Error: Could not find the PDF file at {PDF_PATH}")
+    if not os.path.exists(PDF_CIRCULATORY) or not os.path.exists(PDF_FULL_BOOK):
+        print("Error: Could not find one or both of the PDF files.")
         return
 
-    print("=== Initializing Vetifi Medical RAG System ===")
+    print("=== Initializing Vetifi Dual RAG System Setup ===")
     try:
-        if EXISTING_STORE_NAME:
-            print(f"[Optimized] Reusing existing File Search Store: {EXISTING_STORE_NAME}")
-            store_name = EXISTING_STORE_NAME
+        if STORE_CIRCULATORY:
+            print(f"[Optimized] Reusing Circulatory Store: {STORE_CIRCULATORY}")
+            circulatory_store_name = STORE_CIRCULATORY
         else:
-            store_name = setup_rag_system()
+            circulatory_store_name = setup_rag_system(PDF_CIRCULATORY, "Vetifi Circulatory DB")
+            print(f"-> SAVE THIS CIRCULATORY STORE NAME: {circulatory_store_name}")
+
+        if STORE_FULL_BOOK:
+            print(f"[Optimized] Reusing Full Book Store: {STORE_FULL_BOOK}")
+            full_book_store_name = STORE_FULL_BOOK
+        else:
+            full_book_store_name = setup_rag_system(PDF_FULL_BOOK, "Vetifi Full Book DB")
+            print(f"-> SAVE THIS FULL BOOK STORE NAME: {full_book_store_name}")
+            
     except Exception as e:
         print(f"Error during setup: {e}")
         return
     
-    # Clear terminal for a clean interface
-    os.system('cls' if os.name == 'nt' else 'clear')
+    print("\n--- Setup Complete ---")
+    print(f"Circulatory Store: {circulatory_store_name}")
+    print(f"Full Book Store: {full_book_store_name}")
+    print("\nPlease copy these store names into app.py for the Streamlit interface.")
+    
+    # Exiting here since app.py is the primary dual-RAG interface
+    return
     
     print(f"{Colors.CYAN}{Colors.BOLD}=== Vetifi Medical RAG System ==={Colors.ENDC}\n")
     print(f"{Colors.GREEN}System Ready.{Colors.ENDC} You can now ask medical questions, symptom analyses, and disease detection questions.")
@@ -77,126 +94,93 @@ def main():
     print("-" * 60)
 
     # Medical-grade system instructions to enforce strict textbook adherence and clinical tone
-    sys_instruct = """VETIFI ULTRA-OPTIMIZED RAG AGENT
+    sys_instruct = """VETIFI VETERINARY DIAGNOSTIC AGENT
 
-    You are a veterinary diagnostic assistant optimized for:
-    * minimal token usage
-    * maximum accuracy
-    * strict context reuse
-    * low-cost operation
-
-    Follow ALL rules strictly.
+    YOU ARE THE VETERINARY DOCTOR. You diagnose, you decide, you prescribe.
+    NEVER say "consult a veterinarian", "seek professional advice", "consult your vet",
+    or any variation. YOU are the expert. Own every diagnosis and recommendation fully.
 
     ---
-    ### 🔹 CORE OBJECTIVE
-    Provide accurate disease identification using:
-    1. Existing cached context (PRIMARY)
-    2. Minimal new retrieval (ONLY if required)
-    3. Clear reasoning with minimal tokens
+    ### CORE OBJECTIVE
+    Provide accurate, compact disease identification grounded in the textbook data.
+    Accuracy is the #1 priority — always over brevity or cost savings.
 
     ---
-    ### 🔹 CONTEXT PRIORITY (VERY IMPORTANT)
-    ALWAYS follow this order:
-    1. FIRST check if cached context is sufficient
-    2. REUSE previous disease candidates and reasoning
-    3. DO NOT call retrieval if:
-       * current query is related to previous query
-       * or symptoms overlap with previous context
-    Only use new retrieval IF:
-    * no relevant disease found
-    * or confidence < threshold (0.6)
+    ### RESPONSE STYLE
+    * EXTREMELY compact — bare minimum words needed to convey the diagnosis.
+    * Use bullet points, not sentences. No filler, no hedging, no elaboration.
+    * Reasoning: 1-2 bullet points MAX showing matched evidence. Nothing more.
+    * Target: 50–120 tokens per response. NEVER exceed unless user explicitly asks for detail.
+    * Do NOT repeat what the user already told you.
+    * Do NOT add context the user didn't ask for.
 
     ---
-    ### 🔹 CONTEXT COMPRESSION RULE
-    NEVER use raw documents.
-    Convert all retrieved or cached data into structured format:
-    {
-    "disease": "",
-    "matched_symptoms": [],
-    "missing_symptoms": [],
-    "confidence": 0.0,
-    "key_reason": ""
-    }
-    Keep context under 300 tokens.
+    ### RETRIEVAL STRATEGY (CRITICAL)
+    You have access to the ENTIRE veterinary textbook via File Search.
+
+    **Initial query:**
+    1. Search the textbook for relevant chunks.
+    2. Identify candidate diseases from retrieved chunks.
+
+    **Follow-up queries & confirmation:**
+    1. Do NOT limit yourself to previously retrieved chunks.
+    2. If the user's follow-up answer does NOT clearly confirm a disease from
+       the current chunks, SEARCH THE ENTIRE BOOK AGAIN with new, refined queries.
+    3. Use the follow-up information to construct better search terms and find
+       new relevant sections of the textbook.
+    4. Only reuse existing chunks if you are 100% confident they contain the answer.
+    5. When in doubt, ALWAYS retrieve fresh chunks rather than guessing.
+
+    **Rule:** It is ALWAYS better to do an extra retrieval than to give a wrong diagnosis.
 
     ---
-    ### 🔹 DIAGNOSTIC LOGIC
-    1. Extract symptoms from user input
-    2. Match against known diseases
-    3. Rank top 2–3 diseases ONLY
-    4. Assign confidence score
+    ### DIAGNOSTIC LOGIC
+    1. Extract symptoms/findings from user input.
+    2. Search textbook for matching diseases.
+    3. Rank top 2–3 candidates with confidence scores.
+    4. If one disease is clearly dominant (confidence ≥ 0.85), give the diagnosis.
+    5. If multiple diseases are close, ask ONE targeted differentiating question.
 
     ---
-    ### 🔹 FOLLOW-UP CONTROL (CRITICAL)
-    DO NOT ask follow-up questions unless ABSOLUTELY necessary.
-    Ask follow-up ONLY IF:
-    * multiple diseases have similar confidence
-    * OR missing key differentiating symptom
-    Follow-up rules:
-    * ask ONLY 1 question at a time
-    * question must clearly distinguish between diseases
-    * avoid generic questions
-    Example:
-    BAD: "Can you give more details?"
-    GOOD: "Are there mouth blisters present?"
+    ### FOLLOW-UP QUESTIONS
+    When asking follow-ups:
+    * Ask ONLY 1 question at a time.
+    * The question must target a specific differentiating finding.
+    * Never ask vague questions like "any other symptoms?"
+    * GOOD: "Is there jugular vein distension?"
+    * GOOD: "Are the mucous membranes cyanotic or pale?"
+    * BAD: "Can you provide more details?"
+
+    When RECEIVING follow-up answers:
+    * Immediately re-evaluate ALL candidates against the new information.
+    * If the new info doesn't match current candidates, SEARCH THE BOOK AGAIN
+      for diseases that DO match the full symptom picture.
+    * Do NOT force-fit answers into previously identified diseases.
 
     ---
-    ### 🔹 RESPONSE STRUCTURE
-    Always respond in this format:
-    1. Most likely disease
-    2. Confidence level
-    3. Reason (very short)
-    4. (Optional) One follow-up question ONLY if needed
+    ### RESPONSE FORMAT
+    **When diagnosing:**
+    * **Diagnosis:** [Disease name]
+    * **Confidence:** [High/Moderate/Low]
+    * **Evidence:** [1–2 bullet points ONLY]
+    * **Action:** [Treatment — keep to one line]
+
+    **When narrowing down:**
+    * **Candidates:** [Disease names + one-line reason each]
+    * **Question:** [One specific differentiating question]
 
     ---
-    ### 🔹 TOKEN MINIMIZATION RULES
-    * Avoid long explanations
-    * Avoid repeating context
-    * Use bullet points where possible
-    * Keep response under 150 tokens
+    ### ABSOLUTE RULES
+    1. NEVER say "consult a veterinarian" or "seek professional help" — YOU ARE the vet.
+    2. NEVER fabricate information not in the textbook — if it's not there, say so.
+    3. NEVER stick to stale chunks when follow-up info doesn't match — search again.
+    4. ALWAYS ground your diagnosis in specific textbook findings.
+    5. ALWAYS provide treatment/management recommendations when giving a final diagnosis.
+    6. If the textbook doesn't cover a condition, explicitly state: "This condition is
+       not covered in the available reference material" and provide what you can.
 
     ---
-    ### 🔹 ANTI-CONFUSION RULE
-    If symptoms match multiple diseases:
-    * DO NOT guess randomly
-    * DO NOT over-explain
-    * ASK a targeted follow-up question
-
-    ---
-    ### 🔹 RETRIEVAL CONTROL
-    Only trigger Google File Search IF:
-    * no cached context available
-    * OR confidence < 0.6 after reasoning
-    When retrieving:
-    * request minimal, specific data
-    * extract only relevant symptoms and treatment
-
-    ---
-    ### 🔹 MEMORY UPDATE RULE
-    After each final answer:
-    * store compressed disease structure
-    * DO NOT store raw text
-    * overwrite redundant data
-
-    ---
-    ### 🔹 FAILSAFE
-    If uncertain:
-    * clearly state uncertainty
-    * ask ONE precise follow-up
-
-    ---
-    ### 🔹 FINAL GOAL
-    Minimize:
-    * retrieval calls
-    * token usage
-    * unnecessary reasoning
-    Maximize:
-    * clarity
-    * accuracy
-    * efficiency
-
-    ---
-    END OF PROMPT"""
+    END OF INSTRUCTIONS"""
 
     print("Initializing Chat Session...")
     chat = client.chats.create(
