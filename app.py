@@ -1,34 +1,26 @@
 import streamlit as st
 import os
 import time
-import concurrent.futures
 from google import genai
 from google.genai import types
 
 # --- Page config ---
-st.set_page_config(page_title="Vetifi Medical RAG", page_icon="🐾", layout="wide")
+st.set_page_config(page_title="Vetifi AI", page_icon="🐾", layout="centered")
 
-# --- API Keys (primary + backup for 429 quota failover) ---
+# --- API Key ---
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
-    API_KEY_BACKUP = st.secrets.get("GEMINI_API_KEY_BACKUP", "AIzaSyCS9XSi8fGN5EKCOyDjbuKkpJqfw9XNKFE")
 except:
     API_KEY = os.environ.get("GEMINI_API_KEY", "")
-    API_KEY_BACKUP = os.environ.get("GEMINI_API_KEY_BACKUP", "AIzaSyCS9XSi8fGN5EKCOyDjbuKkpJqfw9XNKFE")
 
 @st.cache_resource
-def get_clients():
-    primary = genai.Client(api_key=API_KEY)
-    backup = genai.Client(api_key=API_KEY_BACKUP) if API_KEY_BACKUP else None
-    return primary, backup
+def get_client():
+    return genai.Client(api_key=API_KEY)
 
-client, client_backup = get_clients()
+client = get_client()
 
-# --- Store Names ---
-STORE_CIRCULATORY = "fileSearchStores/vetifi-circulatory-db-hu6b2ley5ac8"  # Circulatory only (pp. 1-187)
-STORE_FULL_BOOK = "INSERT_FULL_BOOK_STORE_NAME_HERE"                        # Full Merck Manual (indexing...)
-
-FULL_BOOK_READY = bool(STORE_FULL_BOOK) and not STORE_FULL_BOOK.startswith("INSERT")
+# --- Circulatory System Store ONLY ---
+STORE = "fileSearchStores/vetifi-circulatory-db-hu6b2ley5ac8"
 
 # --- System Instructions ---
 sys_instruct = """VETIFI VETERINARY DIAGNOSTIC AGENT
@@ -40,7 +32,7 @@ or any variation. YOU are the expert. Own every diagnosis and recommendation ful
 ---
 ### CORE OBJECTIVE
 Provide accurate, compact disease identification grounded in the textbook data.
-Accuracy is the #1 priority — always over brevity or cost savings.
+Accuracy is the #1 priority.
 
 ---
 ### RESPONSE STYLE
@@ -53,7 +45,7 @@ Accuracy is the #1 priority — always over brevity or cost savings.
 
 ---
 ### RETRIEVAL STRATEGY (CRITICAL)
-You have access to the ENTIRE veterinary textbook via File Search.
+You have access to the circulatory system veterinary textbook via File Search.
 
 **Initial query:**
 1. Search the textbook for relevant chunks.
@@ -90,8 +82,7 @@ When asking follow-ups:
 
 When RECEIVING follow-up answers:
 * Immediately re-evaluate ALL candidates against the new information.
-* If the new info doesn't match current candidates, SEARCH THE BOOK AGAIN
-  for diseases that DO match the full symptom picture.
+* If the new info doesn't match current candidates, SEARCH THE BOOK AGAIN.
 * Do NOT force-fit answers into previously identified diseases.
 
 ---
@@ -113,156 +104,58 @@ When RECEIVING follow-up answers:
 3. NEVER stick to stale chunks when follow-up info doesn't match - search again.
 4. ALWAYS ground your diagnosis in specific textbook findings.
 5. ALWAYS provide treatment/management recommendations when giving a final diagnosis.
-6. If the textbook doesn't cover a condition, explicitly state: "This condition is
-   not covered in the available reference material" and provide what you can.
 
 ---
 END OF INSTRUCTIONS"""
 
-# --- Helper: create a chat session ---
-def make_chat(api_client, store_name):
-    return api_client.chats.create(
-        model="gemini-2.5-flash",
-        config=types.GenerateContentConfig(
-            system_instruction=sys_instruct,
-            temperature=0.1,
-            tools=[types.Tool(file_search=types.FileSearch(file_search_store_names=[store_name]))]
+# --- Initialize chat session ---
+if "chat" not in st.session_state:
+    try:
+        st.session_state.chat = client.chats.create(
+            model="gemini-2.5-flash",
+            config=types.GenerateContentConfig(
+                system_instruction=sys_instruct,
+                temperature=0.1,
+                tools=[types.Tool(file_search=types.FileSearch(file_search_store_names=[STORE]))]
+            )
         )
-    )
-
-# --- Helper: send message with 429 fallback ---
-def fetch_response(chat_session, prompt_text, store_name, session_key):
-    """Send message. On 429, wait and retry up to 3 times with the same key."""
-    for attempt in range(3):
-        try:
-            return chat_session.send_message(prompt_text)
-        except Exception as e:
-            err = str(e)
-            if ("429" in err or "RESOURCE_EXHAUSTED" in err) and attempt < 2:
-                wait = (attempt + 1) * 10  # 10s, 20s
-                time.sleep(wait)
-                # Recreate chat on same primary client (quota may have replenished)
-                chat_session = make_chat(client, store_name)
-                st.session_state[session_key] = chat_session
-                continue
-            raise e
-
-
-# --- Initialize chat sessions ---
-if "chat_circulatory" not in st.session_state:
-    try:
-        st.session_state.chat_circulatory = make_chat(client, STORE_CIRCULATORY)
-        st.session_state.messages_circulatory = []
+        st.session_state.messages = []
     except Exception as e:
-        st.error(f"Error initializing Circulatory DB: {e}")
-
-if FULL_BOOK_READY and "chat_full_book" not in st.session_state:
-    try:
-        st.session_state.chat_full_book = make_chat(client, STORE_FULL_BOOK)
-        st.session_state.messages_full_book = []
-    except Exception as e:
-        st.error(f"Error initializing Full Book DB: {e}")
+        st.error(f"Error initializing Vetifi: {e}")
 
 # --- UI ---
-st.title("🐾 Vetifi Medical RAG — Side-by-Side Comparison")
-st.markdown("Dual-RAG diagnostic testing: Circulatory chapter vs. Entire Merck Manual")
+st.title("🐾 Vetifi AI")
+st.markdown("Veterinary diagnostic assistant — Merck Manual Circulatory System")
 st.divider()
 
-col1, col2 = st.columns(2)
+# Display chat history
+if "messages" in st.session_state:
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-with col1:
-    st.subheader("🫀 Circulatory System ONLY")
-    circ_container = st.container(height=500)
-    with circ_container:
-        if "messages_circulatory" in st.session_state:
-            for msg in st.session_state.messages_circulatory:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
+# Chat input
+if prompt := st.chat_input("Describe symptoms or ask a diagnostic question..."):
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-with col2:
-    st.subheader("📖 Entire Merck Manual")
-    full_container = st.container(height=500)
-    with full_container:
-        if not FULL_BOOK_READY:
-            st.warning("⏳ Full Merck Manual is still being indexed by Google (~1-2 hrs for 193MB file). Circulatory RAG is fully functional. Come back soon!")
-        elif "messages_full_book" in st.session_state:
-            for msg in st.session_state.messages_full_book:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-# --- Chat input ---
-if prompt := st.chat_input("Ask a medical question or describe symptoms..."):
-    if "messages_circulatory" not in st.session_state:
-        st.session_state.messages_circulatory = []
-
-    # Display user input in circulatory column
-    st.session_state.messages_circulatory.append({"role": "user", "content": prompt})
-    with col1:
-        with circ_container:
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-    with col1:
-        with circ_container:
-            circ_status = st.empty()
-            circ_status.info("Thinking (Circulatory DB)...")
-            circ_resp_placeholder = st.empty()
-
-    if FULL_BOOK_READY and "messages_full_book" in st.session_state:
-        # Both stores ready — run concurrently
-        st.session_state.messages_full_book.append({"role": "user", "content": prompt})
-        with col2:
-            with full_container:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-        with col2:
-            with full_container:
-                full_status = st.empty()
-                full_status.info("Thinking (Full Book)...")
-                full_resp_placeholder = st.empty()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            future_circ = executor.submit(
-                fetch_response, st.session_state.chat_circulatory, prompt, STORE_CIRCULATORY, "chat_circulatory"
-            )
-            future_full = executor.submit(
-                fetch_response, st.session_state.chat_full_book, prompt, STORE_FULL_BOOK, "chat_full_book"
-            )
-            concurrent.futures.wait([future_circ, future_full])
-
-        try:
-            circ_result = future_circ.result().text
-            st.session_state.messages_circulatory.append({"role": "assistant", "content": circ_result})
-            circ_status.empty()
-            with col1:
-                with circ_container:
-                    with circ_resp_placeholder.chat_message("assistant"):
-                        st.markdown(circ_result)
-        except Exception as e:
-            circ_status.error(f"Circulatory Error: {e}")
-
-        try:
-            full_result = future_full.result().text
-            st.session_state.messages_full_book.append({"role": "assistant", "content": full_result})
-            full_status.empty()
-            with col2:
-                with full_container:
-                    with full_resp_placeholder.chat_message("assistant"):
-                        st.markdown(full_result)
-        except Exception as e:
-            full_status.error(f"Full Book Error: {e}")
-
-    else:
-        # Only circulatory available
-        try:
-            circ_result = fetch_response(
-                st.session_state.chat_circulatory, prompt, STORE_CIRCULATORY, "chat_circulatory"
-            ).text
-            st.session_state.messages_circulatory.append({"role": "assistant", "content": circ_result})
-            circ_status.empty()
-            with col1:
-                with circ_container:
-                    with circ_resp_placeholder.chat_message("assistant"):
-                        st.markdown(circ_result)
-        except Exception as e:
-            circ_status.error(f"Error: {e}")
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        with st.spinner("Thinking..."):
+            for attempt in range(3):
+                try:
+                    response = st.session_state.chat.send_message(prompt)
+                    placeholder.markdown(response.text)
+                    st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    break
+                except Exception as e:
+                    err = str(e)
+                    if ("429" in err or "RESOURCE_EXHAUSTED" in err) and attempt < 2:
+                        time.sleep((attempt + 1) * 10)
+                        continue
+                    placeholder.error(f"Error: {e}")
+                    break
