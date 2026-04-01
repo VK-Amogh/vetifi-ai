@@ -155,7 +155,9 @@ if prompt := st.chat_input("Describe symptoms or ask a diagnostic question..."):
                 except Exception as e:
                     err = str(e)
                     if ("429" in err or "RESOURCE_EXHAUSTED" in err) and attempt < 2:
-                        time.sleep((attempt + 1) * 10)
+                        wait = 60 if attempt == 0 else 120  # 60s then 120s
+                        placeholder.warning(f"⏳ Quota limit hit — waiting {wait}s before retry (attempt {attempt+1}/3)...")
+                        time.sleep(wait)
                         continue
                     placeholder.error(f"Error: {e}")
                     break
