@@ -114,13 +114,14 @@ When RECEIVING follow-up answers:
 END OF INSTRUCTIONS"""
 
 # --- Store Names ---
-# NOTE: User needs to insert their created store names here
-STORE_CIRCULATORY = "INSERT_CIRCULATORY_STORE_NAME_HERE"
-STORE_FULL_BOOK = "INSERT_FULL_BOOK_STORE_NAME_HERE"
+STORE_CIRCULATORY = "fileSearchStores/vetifi-circulatory-db-hu6b2ley5ac8"    # Circulatory only (pp. 1-187)
+STORE_FULL_BOOK = "INSERT_FULL_BOOK_STORE_NAME_HERE"                           # Full Merck Manual (indexing...)
+
+FULL_BOOK_READY = STORE_FULL_BOOK and not STORE_FULL_BOOK.startswith("INSERT")
 
 import concurrent.futures
 
-# Initialize chat sessions in session state for both
+# Initialize Circulatory chat session
 if "chat_circulatory" not in st.session_state:
     try:
         chat_circ = client.chats.create(
@@ -136,7 +137,8 @@ if "chat_circulatory" not in st.session_state:
     except Exception as e:
         st.error(f"Error initializing Circulatory DB: {e}")
 
-if "chat_full_book" not in st.session_state:
+# Initialize Full Book chat session only if store is ready
+if FULL_BOOK_READY and "chat_full_book" not in st.session_state:
     try:
         chat_full = client.chats.create(
             model="gemini-2.5-flash",
@@ -169,7 +171,9 @@ with col2:
     st.subheader("Entire Merck Manual")
     full_container = st.container(height=500)
     with full_container:
-        if "messages_full_book" in st.session_state:
+        if not FULL_BOOK_READY:
+            st.warning("⏳ Full Merck Manual is still being indexed by Google (~1-2 hrs for 193MB). Circulatory system is fully functional now. Come back soon!")
+        elif "messages_full_book" in st.session_state:
             for message in st.session_state.messages_full_book:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
@@ -179,41 +183,65 @@ def fetch_response(chat_session, prompt_text):
 
 # Chat input
 if prompt := st.chat_input("Ask a medical question, symptom analysis..."):
-    # Immediately add user prompt to history and display in both columns
+    # Always handle circulatory
+    if "messages_circulatory" not in st.session_state:
+        st.session_state.messages_circulatory = []
+
     st.session_state.messages_circulatory.append({"role": "user", "content": prompt})
-    st.session_state.messages_full_book.append({"role": "user", "content": prompt})
-    
     with col1:
         with circ_container:
             with st.chat_message("user"): st.markdown(prompt)
-    with col2:
-        with full_container:
-            with st.chat_message("user"): st.markdown(prompt)
 
-    # Placeholders for concurrent execution signs
     with col1:
         with circ_container:
             circ_status = st.empty()
             circ_status.info("Thinking (Circulatory DB)...")
             circ_resp_placeholder = st.empty()
 
-    with col2:
-        with full_container:
-            full_status = st.empty()
-            full_status.info("Thinking (Full Book)...")
-            full_resp_placeholder = st.empty()
+    if FULL_BOOK_READY and "messages_full_book" in st.session_state:
+        # Both ready — run concurrently
+        st.session_state.messages_full_book.append({"role": "user", "content": prompt})
+        with col2:
+            with full_container:
+                with st.chat_message("user"): st.markdown(prompt)
 
-    # Execute both simultaneously using ThreadPoolExecutor
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        future_circ = executor.submit(fetch_response, st.session_state.chat_circulatory, prompt)
-        future_full = executor.submit(fetch_response, st.session_state.chat_full_book, prompt)
-        
-        # Wait for both to complete
-        concurrent.futures.wait([future_circ, future_full])
-        
-        # Process Circulatory Response
+        with col2:
+            with full_container:
+                full_status = st.empty()
+                full_status.info("Thinking (Full Book)...")
+                full_resp_placeholder = st.empty()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_circ = executor.submit(fetch_response, st.session_state.chat_circulatory, prompt)
+            future_full = executor.submit(fetch_response, st.session_state.chat_full_book, prompt)
+            concurrent.futures.wait([future_circ, future_full])
+
+            try:
+                circ_result = future_circ.result().text
+                st.session_state.messages_circulatory.append({"role": "assistant", "content": circ_result})
+                circ_status.empty()
+                with col1:
+                    with circ_container:
+                        with circ_resp_placeholder.chat_message("assistant"):
+                            st.markdown(circ_result)
+            except Exception as e:
+                circ_status.error(f"Circulatory Error: {e}")
+
+            try:
+                full_result = future_full.result().text
+                st.session_state.messages_full_book.append({"role": "assistant", "content": full_result})
+                full_status.empty()
+                with col2:
+                    with full_container:
+                        with full_resp_placeholder.chat_message("assistant"):
+                            st.markdown(full_result)
+            except Exception as e:
+                full_status.error(f"Full Book Error: {e}")
+
+    else:
+        # Only circulatory available — run solo
         try:
-            circ_result = future_circ.result().text
+            circ_result = fetch_response(st.session_state.chat_circulatory, prompt).text
             st.session_state.messages_circulatory.append({"role": "assistant", "content": circ_result})
             circ_status.empty()
             with col1:
@@ -222,16 +250,3 @@ if prompt := st.chat_input("Ask a medical question, symptom analysis..."):
                         st.markdown(circ_result)
         except Exception as e:
             circ_status.error(f"Error: {e}")
-
-        # Process Full Book Response
-        try:
-            full_result = future_full.result().text
-            st.session_state.messages_full_book.append({"role": "assistant", "content": full_result})
-            full_status.empty()
-            with col2:
-                with full_container:
-                    with full_resp_placeholder.chat_message("assistant"):
-                        st.markdown(full_result)
-        except Exception as e:
-            full_status.error(f"Error: {e}")
-

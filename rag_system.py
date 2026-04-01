@@ -51,9 +51,8 @@ def setup_rag_system(pdf_path, display_name):
     return file_search_store.name
 
 # --- Existing store names (set after first run to skip re-indexing) ---
-# Set to None to force re-creation
-STORE_CIRCULATORY = None   # e.g. "fileSearchStores/circulatory-system-xxxxx"
-STORE_FULL_BOOK = None     # e.g. "fileSearchStores/full-merck-manual-xxxxx"
+STORE_CIRCULATORY = "fileSearchStores/vetifi-circulatory-db-hu6b2ley5ac8"  # Done
+STORE_FULL_BOOK = None   # Will be created on next run
 
 def main():
     if not os.path.exists(PDF_CIRCULATORY) or not os.path.exists(PDF_FULL_BOOK):
