@@ -132,15 +132,21 @@ def make_chat(api_client, store_name):
 
 # --- Helper: send message with 429 fallback ---
 def fetch_response(chat_session, prompt_text, store_name, session_key):
-    """Send message. Auto-switch to backup API key on 429 RESOURCE_EXHAUSTED."""
-    try:
-        return chat_session.send_message(prompt_text)
-    except Exception as e:
-        if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and client_backup:
-            backup_chat = make_chat(client_backup, store_name)
-            st.session_state[session_key] = backup_chat
-            return backup_chat.send_message(prompt_text)
-        raise e
+    """Send message. On 429, wait and retry up to 3 times with the same key."""
+    for attempt in range(3):
+        try:
+            return chat_session.send_message(prompt_text)
+        except Exception as e:
+            err = str(e)
+            if ("429" in err or "RESOURCE_EXHAUSTED" in err) and attempt < 2:
+                wait = (attempt + 1) * 10  # 10s, 20s
+                time.sleep(wait)
+                # Recreate chat on same primary client (quota may have replenished)
+                chat_session = make_chat(client, store_name)
+                st.session_state[session_key] = chat_session
+                continue
+            raise e
+
 
 # --- Initialize chat sessions ---
 if "chat_circulatory" not in st.session_state:
