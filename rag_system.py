@@ -160,12 +160,12 @@ def main():
     ### RESPONSE FORMAT
     **When diagnosing:**
     * **Diagnosis:** [Disease name]
-    * **Confidence:** [High/Moderate/Low]
+    * **Confidence:** [X%] — e.g. 87%
     * **Evidence:** [1–2 bullet points ONLY]
     * **Action:** [Treatment — keep to one line]
 
     **When narrowing down:**
-    * **Candidates:** [Disease names + one-line reason each]
+    * **Candidates:** [Disease name — X% confidence, one-line reason each]
     * **Question:** [One specific differentiating question]
 
     ---
